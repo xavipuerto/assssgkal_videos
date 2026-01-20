@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Uploader - AsGhalPro</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: #a0a0a0;
+        }
+
+        /* Login Form */
+        .login-container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .login-container h2 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #e94560;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #ccc;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.4);
+        }
+
+        .btn-logout {
+            background: transparent;
+            border: 1px solid #e94560;
+            color: #e94560;
+            padding: 10px 20px;
+            width: auto;
+        }
+
+        .btn-logout:hover {
+            background: #e94560;
+            color: #fff;
+        }
+
+        /* Upload Container */
+        .upload-container {
+            display: none;
+        }
+
+        .upload-container.active {
+            display: block;
+        }
+
+        .user-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 15px 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+
+        .user-info span {
+            color: #4ade80;
+        }
+
+        /* Drop Zone */
+        .drop-zone {
+            border: 3px dashed rgba(233, 69, 96, 0.5);
+            border-radius: 20px;
+            padding: 60px 40px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.02);
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: #e94560;
+            background: rgba(233, 69, 96, 0.1);
+        }
+
+        .drop-zone-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+
+        .drop-zone h3 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+        }
+
+        .drop-zone p {
+            color: #a0a0a0;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        /* File List */
+        .file-list {
+            margin-top: 30px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            margin-bottom: 10px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .file-icon {
+            font-size: 1.5rem;
+        }
+
+        .file-name {
+            font-weight: 500;
+        }
+
+        .file-size {
+            font-size: 0.85rem;
+            color: #a0a0a0;
+        }
+
+        .file-status {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+
+        .status-uploading {
+            background: rgba(59, 130, 246, 0.2);
+            color: #3b82f6;
+        }
+
+        .status-success {
+            background: rgba(74, 222, 128, 0.2);
+            color: #4ade80;
+        }
+
+        .status-error {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+
+        /* Progress Bar */
+        .progress-bar {
+            width: 100px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            transition: width 0.3s;
+        }
+
+        /* Messages */
+        .message {
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .message.show {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .message-error {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid #ef4444;
+            color: #ef4444;
+        }
+
+        .message-success {
+            background: rgba(74, 222, 128, 0.2);
+            border: 1px solid #4ade80;
+            color: #4ade80;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 AsGhalPro File Uploader</h1>
+            <p>Drag and drop your files to upload them to Blob Storage</p>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <!-- Login Form -->
+        <div id="loginContainer" class="login-container">
+            <h2>🔐 Sign In</h2>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter your username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter your password" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Sign In</button>
+            </form>
+        </div>
+
+        <!-- Upload Container -->
+        <div id="uploadContainer" class="upload-container">
+            <div class="user-info">
+                <div>
+                    👤 Logged in as: <span id="usernameDisplay"></span>
+                </div>
+                <button id="logoutBtn" class="btn btn-logout">Sign Out</button>
+            </div>
+
+            <div id="dropZone" class="drop-zone">
+                <div class="drop-zone-icon">📤</div>
+                <h3>Drag your files here</h3>
+                <p>or click to select files</p>
+                <input type="file" id="fileInput" class="file-input" multiple>
+            </div>
+
+            <div id="fileList" class="file-list"></div>
+        </div>
+    </div>
+
+    <script>
+        const loginContainer = document.getElementById('loginContainer');
+        const uploadContainer = document.getElementById('uploadContainer');
+        const loginForm = document.getElementById('loginForm');
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const usernameDisplay = document.getElementById('usernameDisplay');
+        const messageDiv = document.getElementById('message');
+
+        let accessToken = localStorage.getItem('access_token');
+        let username = localStorage.getItem('username');
+
+        // Check authentication on load
+        checkAuth();
+
+        async function checkAuth() {
+            try {
+                const response = await fetch('/check-auth', {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                
+                if (data.authenticated) {
+                    showUploadInterface(data.username);
+                } else {
+                    showLoginInterface();
+                }
+            } catch (error) {
+                showLoginInterface();
+            }
+        }
+
+        function showMessage(text, type) {
+            messageDiv.textContent = text;
+            messageDiv.className = `message show message-${type}`;
+            setTimeout(() => {
+                messageDiv.className = 'message';
+            }, 5000);
+        }
+
+        function showLoginInterface() {
+            loginContainer.style.display = 'block';
+            uploadContainer.classList.remove('active');
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('username');
+        }
+
+        function showUploadInterface(user) {
+            loginContainer.style.display = 'none';
+            uploadContainer.classList.add('active');
+            usernameDisplay.textContent = user;
+            username = user;
+        }
+
+        // Login form submission
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value
+            };
+
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData),
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    accessToken = data.access_token;
+                    localStorage.setItem('access_token', accessToken);
+                    localStorage.setItem('username', formData.username);
+                    showMessage('Login successful!', 'success');
+                    showUploadInterface(formData.username);
+                } else {
+                    showMessage(data.error || 'Login failed', 'error');
+                }
+            } catch (error) {
+                showMessage('Connection error. Is the server running?', 'error');
+            }
+        });
+
+        // Logout
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                await fetch('/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+            
+            accessToken = null;
+            showLoginInterface();
+            fileList.innerHTML = '';
+            showMessage('Logged out successfully', 'success');
+        });
+
+        // Drop zone events
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            handleFiles(files);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+
+        function handleFiles(files) {
+            Array.from(files).forEach(uploadFile);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function getFileIcon(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            const icons = {
+                'pdf': '📄',
+                'doc': '📝', 'docx': '📝',
+                'xls': '📊', 'xlsx': '📊',
+                'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️',
+                'mp4': '🎬', 'avi': '🎬', 'mov': '🎬',
+                'zip': '📦', 'rar': '📦',
+                'txt': '📃'
+            };
+            return icons[ext] || '📁';
+        }
+
+        async function uploadFile(file) {
+            // Create file item element
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            fileItem.innerHTML = `
+                <div class="file-info">
+                    <span class="file-icon">${getFileIcon(file.name)}</span>
+                    <div>
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${formatFileSize(file.size)}</div>
+                    </div>
+                </div>
+                <div class="file-status status-uploading">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+            `;
+            fileList.prepend(fileItem);
+
+            const progressFill = fileItem.querySelector('.progress-fill');
+            const statusDiv = fileItem.querySelector('.file-status');
+
+            // Simulate progress
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += Math.random() * 30;
+                if (progress > 90) progress = 90;
+                progressFill.style.width = progress + '%';
+            }, 200);
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: formData,
+                    credentials: 'include'
+                });
+
+                clearInterval(progressInterval);
+                progressFill.style.width = '100%';
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    statusDiv.className = 'file-status status-success';
+                    statusDiv.textContent = '✓ Uploaded';
+                } else {
+                    statusDiv.className = 'file-status status-error';
+                    statusDiv.textContent = data.error || 'Error';
+                    
+                    if (response.status === 401) {
+                        showMessage('Session expired. Please sign in again.', 'error');
+                        showLoginInterface();
+                    }
+                }
+            } catch (error) {
+                clearInterval(progressInterval);
+                statusDiv.className = 'file-status status-error';
+                statusDiv.textContent = 'Connection error';
+            }
+        }
+    </script>
+</body>
+</html>

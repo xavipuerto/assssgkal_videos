@@ -1,0 +1,91 @@
+{
+  "realm": "asghalpro",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "clients": [
+    {
+      "clientId": "file-uploader",
+      "name": "File Uploader Application",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "file-uploader-secret",
+      "redirectUris": ["http://localhost:5000/*", "http://127.0.0.1:5000/*"],
+      "webOrigins": ["http://localhost:5000", "http://127.0.0.1:5000"],
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "access.token.lifespan": "300"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "profile",
+        "roles",
+        "email"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "carlos.mendez",
+      "email": "carlos.mendez@asghalpro.com",
+      "firstName": "Carlos",
+      "lastName": "Mendez",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Carlos123!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["default-roles-asghalpro"]
+    },
+    {
+      "username": "laura.garcia",
+      "email": "laura.garcia@asghalpro.com",
+      "firstName": "Laura",
+      "lastName": "Garcia",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Laura456!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["default-roles-asghalpro"]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Regular user role"
+      },
+      {
+        "name": "admin",
+        "description": "Administrator role"
+      }
+    ]
+  },
+  "defaultRoles": ["user"]
+}

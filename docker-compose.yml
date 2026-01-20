@@ -1,0 +1,36 @@
+version: '3.8'
+
+# Docker Compose para la aplicación File Uploader
+# Keycloak se levanta por separado con docker-compose.keycloak.yml
+
+services:
+  file-uploader:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: file-uploader
+    env_file:
+      - .env
+    environment:
+      # Keycloak - Cambiar estas URLs para producción
+      KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://host.docker.internal:8080}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-asghalpro}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-file-uploader}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-file-uploader-secret}
+      # Azure Blob Storage
+      AZURE_BLOB_URL: ${AZURE_BLOB_URL:-https://idricaldvuspre.blob.core.windows.net/videos}
+      AZURE_SAS_TOKEN: ${AZURE_SAS_TOKEN:-}
+    volumes:
+      - ./config.ini:/app/config.ini:ro
+    ports:
+      - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

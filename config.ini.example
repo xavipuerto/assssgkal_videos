@@ -1,0 +1,16 @@
+[azure_blob]
+# Azure Blob Storage Configuration (usando SAS Token)
+blob_url = https://YOUR_ACCOUNT.blob.core.windows.net/YOUR_CONTAINER
+sas_token = YOUR_SAS_TOKEN_HERE
+
+[keycloak]
+# Keycloak Configuration - Cambiar para producción
+server_url = http://localhost:8080
+realm = asghalpro
+client_id = file-uploader
+client_secret = file-uploader-secret
+
+[app]
+# Application Configuration
+max_file_size_mb = 500
+allowed_extensions = .pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.gif,.mp4,.avi,.mov,.mkv,.zip,.rar,.7z
