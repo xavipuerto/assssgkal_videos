@@ -9,6 +9,8 @@ server_url = http://localhost:8080
 realm = asghalpro
 client_id = file-uploader
 client_secret = file-uploader-secret
+# Required role for file uploads (must exist as client role in Keycloak)
+required_role = videosasghal
 
 [app]
 # Application Configuration
