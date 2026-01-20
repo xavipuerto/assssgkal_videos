@@ -1,17 +1,54 @@
 import os
 import configparser
+import logging
 from functools import wraps
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from keycloak import KeycloakOpenID
 from azure.storage.blob import BlobClient
-from jose import jwt, JWTError
 import requests
 from urllib.parse import quote
+import magic
+
+# Configure logging for gunicorn
+logging.basicConfig(level=logging.INFO)
+gunicorn_logger = logging.getLogger('gunicorn.error')
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+app.logger.handlers = gunicorn_logger.handlers
+app.logger.setLevel(gunicorn_logger.level)
 CORS(app, supports_credentials=True)
+
+# Rate limiting configuration
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
+
+# Custom rate limit exceeded handler - must be registered with Flask error handler
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return jsonify({
+        'error': 'Too many requests',
+        'message': str(e.description)
+    }), 429
+
+# Security headers middleware
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    # CSP - adjust as needed for your CDNs
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+    return response
 
 # Load configuration
 config = configparser.RawConfigParser()
@@ -31,24 +68,76 @@ AZURE_SAS_TOKEN = os.getenv('AZURE_SAS_TOKEN', config.get('azure_blob', 'sas_tok
 MAX_FILE_SIZE_MB = int(config.get('app', 'max_file_size_mb', fallback='500'))
 ALLOWED_EXTENSIONS = config.get('app', 'allowed_extensions', fallback='.pdf,.jpg,.png,.mp4').split(',')
 
+# TLS verification - set to True in production
+KEYCLOAK_VERIFY_SSL = os.getenv('KEYCLOAK_VERIFY_SSL', 'true').lower() == 'true'
+
+# Magic bytes for file type validation
+ALLOWED_MIME_TYPES = {
+    '.pdf': ['application/pdf'],
+    '.jpg': ['image/jpeg'],
+    '.jpeg': ['image/jpeg'],
+    '.png': ['image/png'],
+    '.gif': ['image/gif'],
+    '.mp4': ['video/mp4'],
+    '.avi': ['video/x-msvideo', 'video/avi'],
+    '.mov': ['video/quicktime'],
+    '.mkv': ['video/x-matroska'],
+    '.doc': ['application/msword'],
+    '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    '.xls': ['application/vnd.ms-excel'],
+    '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    '.txt': ['text/plain'],
+    '.zip': ['application/zip', 'application/x-zip-compressed'],
+    '.rar': ['application/x-rar-compressed', 'application/vnd.rar'],
+    '.7z': ['application/x-7z-compressed'],
+}
+
 # Initialize Keycloak client
 keycloak_openid = None
 
 def init_keycloak():
     global keycloak_openid
     try:
+        app.logger.info(f"Initializing Keycloak: server={KEYCLOAK_SERVER_URL}, realm={KEYCLOAK_REALM}, client={KEYCLOAK_CLIENT_ID}, verify_ssl={KEYCLOAK_VERIFY_SSL}")
         keycloak_openid = KeycloakOpenID(
             server_url=KEYCLOAK_SERVER_URL,
             client_id=KEYCLOAK_CLIENT_ID,
             realm_name=KEYCLOAK_REALM,
             client_secret_key=KEYCLOAK_CLIENT_SECRET,
-            verify=False
+            verify=KEYCLOAK_VERIFY_SSL
         )
-        print(f"Keycloak initialized: {KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}")
+        app.logger.info(f"Keycloak initialized successfully: {KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}")
         return True
     except Exception as e:
-        print(f"Error initializing Keycloak: {e}")
+        app.logger.error(f"Error initializing Keycloak: {e}")
         return False
+
+def validate_file_content(file, extension):
+    """Validate file content using magic bytes"""
+    try:
+        # Read first 2048 bytes for magic detection
+        header = file.read(2048)
+        file.seek(0)  # Reset file pointer
+        
+        # Detect MIME type
+        mime = magic.Magic(mime=True)
+        detected_mime = mime.from_buffer(header)
+        
+        # Check if detected MIME matches allowed types for extension
+        allowed_mimes = ALLOWED_MIME_TYPES.get(extension.lower(), [])
+        
+        if not allowed_mimes:
+            # Extension not in whitelist, allow if extension check passed
+            return True, detected_mime
+            
+        if detected_mime in allowed_mimes:
+            return True, detected_mime
+        
+        return False, detected_mime
+    except Exception as e:
+        print(f"File validation error: {e}")
+        # Fail open for now, but log the error
+        return True, 'unknown'
 
 def token_required(f):
     @wraps(f)
@@ -134,8 +223,11 @@ def index():
     return render_template('index.html', logged_in=logged_in, username=username)
 
 @app.route('/login', methods=['POST'])
+@limiter.limit("5 per minute")  # Rate limit login attempts
 def login():
     """Login endpoint - authenticates with Keycloak and returns JWT"""
+    global keycloak_openid
+    
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
@@ -143,8 +235,18 @@ def login():
     if not username or not password:
         return jsonify({'error': 'Username and password are required'}), 400
     
+    # Re-initialize Keycloak if needed
+    if keycloak_openid is None:
+        app.logger.warning("Keycloak client not initialized, attempting to initialize...")
+        init_keycloak()
+        
+    if keycloak_openid is None:
+        app.logger.error("Failed to initialize Keycloak client")
+        return jsonify({'error': 'Authentication service unavailable'}), 503
+    
     try:
         # Get token from Keycloak
+        app.logger.info(f"Attempting login for user: {username}")
         token = keycloak_openid.token(username, password)
         
         # Store in session
@@ -152,6 +254,7 @@ def login():
         session['refresh_token'] = token.get('refresh_token', '')
         session['username'] = username
         
+        app.logger.info(f"Login successful for user: {username}")
         return jsonify({
             'success': True,
             'message': 'Login successful',
@@ -159,7 +262,7 @@ def login():
             'expires_in': token.get('expires_in', 300)
         })
     except Exception as e:
-        print(f"Login error: {e}")
+        app.logger.error(f"Login error for user {username}: {str(e)}")
         return jsonify({'error': 'Invalid credentials'}), 401
 
 @app.route('/logout', methods=['POST'])
@@ -176,6 +279,7 @@ def logout():
 
 @app.route('/upload', methods=['POST'])
 @token_required
+@limiter.limit("30 per minute")  # Rate limit uploads
 def upload_file():
     """Upload file endpoint - requires valid JWT"""
     if 'file' not in request.files:
@@ -190,6 +294,11 @@ def upload_file():
     file_ext = os.path.splitext(file.filename)[1].lower()
     if file_ext not in ALLOWED_EXTENSIONS:
         return jsonify({'error': f'File type {file_ext} not allowed'}), 400
+    
+    # Validate file content (magic bytes)
+    is_valid, detected_mime = validate_file_content(file, file_ext)
+    if not is_valid:
+        return jsonify({'error': f'File content does not match extension. Detected: {detected_mime}'}), 400
     
     # Check file size
     file.seek(0, 2)

@@ -18,8 +18,11 @@ services:
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-file-uploader}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-file-uploader-secret}
       # Azure Blob Storage
-      AZURE_BLOB_URL: ${AZURE_BLOB_URL:-https://idricaldvuspre.blob.core.windows.net/videos}
+      AZURE_BLOB_URL: ${AZURE_BLOB_URL:-}
       AZURE_SAS_TOKEN: ${AZURE_SAS_TOKEN:-}
+      # Security settings
+      KEYCLOAK_VERIFY_SSL: ${KEYCLOAK_VERIFY_SSL:-false}
+      SECRET_KEY: ${SECRET_KEY:-}
     volumes:
       - ./config.ini:/app/config.ini:ro
     ports:
