@@ -13,4 +13,4 @@ client_secret = file-uploader-secret
 [app]
 # Application Configuration
 max_file_size_mb = 500
-allowed_extensions = .pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.gif,.mp4,.avi,.mov,.mkv,.zip,.rar,.7z
+allowed_extensions = .pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.gif,.mp4,.avi,.mov,.mkv,.zip,.rar,.7z,.ipf
