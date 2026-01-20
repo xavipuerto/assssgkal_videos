@@ -65,6 +65,7 @@ KEYCLOAK_EXTERNAL_URL = os.getenv('KEYCLOAK_EXTERNAL_URL', KEYCLOAK_SERVER_URL) 
 KEYCLOAK_REALM = os.getenv('KEYCLOAK_REALM', config.get('keycloak', 'realm', fallback='asghalpro'))
 KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', config.get('keycloak', 'client_id', fallback='file-uploader'))
 KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', config.get('keycloak', 'client_secret', fallback='file-uploader-secret'))
+REQUIRED_ROLE = os.getenv('REQUIRED_ROLE', config.get('keycloak', 'required_role', fallback='videosasghal'))
 
 # Redirect URI for OAuth2 Authorization Code Flow
 APP_URL = os.getenv('APP_URL', 'http://localhost:5000')
@@ -338,10 +339,10 @@ def callback():
         try:
             client_roles = token_info.get('resource_access', {}).get(KEYCLOAK_CLIENT_ID, {}).get('roles', [])
             
-            if 'videosasghal' not in client_roles:
-                app.logger.warning(f"User {session.get('username')} lacks required role 'videosasghal'. Has roles: {client_roles}")
+            if REQUIRED_ROLE not in client_roles:
+                app.logger.warning(f"User {session.get('username')} lacks required role '{REQUIRED_ROLE}'. Has roles: {client_roles}")
                 session['access_denied'] = True
-                session['access_denied_message'] = "Access denied. Role 'videosasghal' is required. Contactar con el administrador."
+                session['access_denied_message'] = f"Access denied. Role '{REQUIRED_ROLE}' is required. Contactar con el administrador."
             else:
                 session['access_denied'] = False
         except Exception as e:
@@ -382,7 +383,7 @@ def logout():
 @token_required
 @limiter.limit("30 per minute")  # Rate limit uploads
 def upload_file():
-    """Upload file endpoint - requires valid session with 'videosasghal' role"""
+    """Upload file endpoint - requires valid session with configured role"""
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
     
