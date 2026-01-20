@@ -152,48 +152,30 @@ def validate_file_content(file, extension):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = None
+        # Check if user is logged in via session
+        if not session.get('logged_in', False):
+            return jsonify({'error': 'Not authenticated. Please login first.'}), 401
         
-        # Check for token in Authorization header
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            try:
-                token = auth_header.split(" ")[1]
-            except IndexError:
-                return jsonify({'error': 'Token is malformed'}), 401
+        # Check if session has expired based on token expiration time
+        token_exp = session.get('token_exp', 0)
+        if token_exp < time.time():
+            app.logger.warning(f"Session expired for user: {session.get('username', 'unknown')}")
+            # Clear session
+            session.clear()
+            return jsonify({'error': 'Session expired. Please login again.'}), 401
         
-        # Check for token in session
-        if not token and 'access_token' in session:
-            token = session['access_token']
+        # Check if user has access (not denied)
+        if session.get('access_denied', False):
+            return jsonify({'error': 'Access denied. Role required.'}), 403
         
-        if not token:
-            return jsonify({'error': 'Token is missing. Please login first.'}), 401
+        app.logger.info(f"Request authorized for user: {session.get('username', 'unknown')}")
         
-        try:
-            # Decode the JWT access token directly (without verification for now)
-            # This avoids introspection issues with issuer mismatch
-            app.logger.info(f"Validating token for session user: {session.get('username', 'unknown')}")
-            
-            # Decode without verification (Keycloak already validated during OAuth flow)
-            token_info = jwt.decode(token, options={"verify_signature": False})
-            
-            # Check if token is expired
-            exp = token_info.get('exp', 0)
-            if exp < time.time():
-                app.logger.warning(f"Token expired for user: {session.get('username', 'unknown')}")
-                return jsonify({'error': 'Token is expired'}), 401
-            
-            app.logger.info(f"Token valid for user: {token_info.get('preferred_username', 'unknown')}")
-            
-            # Add user info to request
-            request.user = token_info
-            
-        except jwt.ExpiredSignatureError:
-            app.logger.warning(f"Token expired for user: {session.get('username', 'unknown')}")
-            return jsonify({'error': 'Token is expired'}), 401
-        except Exception as e:
-            app.logger.error(f"Token verification error: {e}")
-            return jsonify({'error': 'Token verification failed'}), 401
+        # Add user info to request from session
+        request.user = {
+            'username': session.get('username', ''),
+            'email': session.get('email', ''),
+            'name': session.get('name', '')
+        }
         
         return f(*args, **kwargs)
     return decorated
@@ -262,7 +244,7 @@ def upload_to_blob(file, filename):
 @app.route('/')
 def index():
     """Main page with drag & drop interface"""
-    logged_in = 'access_token' in session
+    logged_in = session.get('logged_in', False)
     username = session.get('username', '')
     access_denied = session.get('access_denied', False)
     access_denied_message = session.get('access_denied_message', '')
@@ -337,38 +319,23 @@ def callback():
         
         tokens = response.json()
         
-        # Store tokens in session
-        session['access_token'] = tokens['access_token']
-        session['refresh_token'] = tokens.get('refresh_token', '')
-        session['id_token'] = tokens.get('id_token', '')
+        # Decode access_token to get user info and roles
+        # We DON'T store the full tokens in session to avoid cookie size limits
+        access_token = tokens['access_token']
+        token_info = jwt.decode(access_token, options={"verify_signature": False})
         
-        # Decode id_token to get user info (JWT is base64 encoded)
-        # The id_token contains user claims directly, avoiding userinfo endpoint issues
-        import base64
-        import json as json_lib
-        try:
-            # JWT has 3 parts: header.payload.signature
-            id_token_parts = tokens.get('id_token', '').split('.')
-            if len(id_token_parts) >= 2:
-                # Decode payload (add padding if needed)
-                payload = id_token_parts[1]
-                payload += '=' * (4 - len(payload) % 4)  # Add padding
-                decoded_payload = base64.urlsafe_b64decode(payload)
-                user_claims = json_lib.loads(decoded_payload)
-                
-                session['username'] = user_claims.get('preferred_username', user_claims.get('sub'))
-                session['email'] = user_claims.get('email', '')
-                session['name'] = user_claims.get('name', '')
-                app.logger.info(f"Decoded user from id_token: {session.get('username')}")
-        except Exception as e:
-            app.logger.error(f"Failed to decode id_token: {e}")
+        # Store only minimal info in session (not the full tokens!)
+        session['logged_in'] = True
+        session['username'] = token_info.get('preferred_username', token_info.get('sub', ''))
+        session['email'] = token_info.get('email', '')
+        session['name'] = token_info.get('name', '')
+        session['token_exp'] = token_info.get('exp', 0)
         
+        app.logger.info(f"Decoded user from token: {session.get('username')}")
         app.logger.info(f"Login successful for user: {session.get('username')}")
         
         # Verify user has required role
         try:
-            access_token = tokens['access_token']
-            token_info = jwt.decode(access_token, options={"verify_signature": False})
             client_roles = token_info.get('resource_access', {}).get(KEYCLOAK_CLIENT_ID, {}).get('roles', [])
             
             if 'videosasghal' not in client_roles:
@@ -413,10 +380,9 @@ def logout():
 
 @app.route('/upload', methods=['POST'])
 @token_required
-@role_required('videosasghal')
 @limiter.limit("30 per minute")  # Rate limit uploads
 def upload_file():
-    """Upload file endpoint - requires valid JWT and 'videosasghal' role"""
+    """Upload file endpoint - requires valid session with 'videosasghal' role"""
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
     
