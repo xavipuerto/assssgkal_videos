@@ -298,6 +298,7 @@
 
         <div id="message" class="message"></div>
 
+        {% if not logged_in %}
         <!-- Login Form -->
         <div id="loginContainer" class="login-container">
             <h2>🔐 Sign In</h2>
@@ -308,12 +309,26 @@
                 Sign In with Keycloak
             </a>
         </div>
-
+        {% elif access_denied %}
+        <!-- Access Denied -->
+        <div id="accessDeniedContainer" class="login-container" style="border-color: #e94560;">
+            <h2 style="color: #e94560;">🚫 Access Denied</h2>
+            <div style="background: rgba(233, 69, 96, 0.1); border: 1px solid #e94560; border-radius: 10px; padding: 20px; margin: 20px 0; text-align: center;">
+                <p style="color: #ff6b6b; font-size: 1.1rem; margin-bottom: 10px;">{{ access_denied_message }}</p>
+            </div>
+            <p style="text-align: center; color: #a0a0a0; margin-bottom: 20px;">
+                Logged in as: <strong style="color: #fff;">{{ username }}</strong>
+            </p>
+            <a href="/logout" class="btn btn-logout" style="display: block; text-align: center; text-decoration: none; width: 100%;">
+                Sign Out
+            </a>
+        </div>
+        {% else %}
         <!-- Upload Container -->
-        <div id="uploadContainer" class="upload-container">
+        <div id="uploadContainer" class="upload-container active">
             <div class="user-info">
                 <div>
-                    👤 Logged in as: <span id="usernameDisplay"></span>
+                    👤 Logged in as: <span id="usernameDisplay">{{ username }}</span>
                 </div>
                 <a href="/logout" class="btn btn-logout" style="text-decoration: none;">Sign Out</a>
             </div>
@@ -327,36 +342,14 @@
 
             <div id="fileList" class="file-list"></div>
         </div>
+        {% endif %}
     </div>
 
     <script>
-        const loginContainer = document.getElementById('loginContainer');
-        const uploadContainer = document.getElementById('uploadContainer');
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
         const fileList = document.getElementById('fileList');
-        const usernameDisplay = document.getElementById('usernameDisplay');
         const messageDiv = document.getElementById('message');
-
-        // Check authentication on load
-        checkAuth();
-
-        async function checkAuth() {
-            try {
-                const response = await fetch('/check-auth', {
-                    credentials: 'include'
-                });
-                const data = await response.json();
-                
-                if (data.authenticated) {
-                    showUploadInterface(data.username);
-                } else {
-                    showLoginInterface();
-                }
-            } catch (error) {
-                showLoginInterface();
-            }
-        }
 
         function showMessage(text, type) {
             messageDiv.textContent = text;
@@ -366,40 +359,32 @@
             }, 5000);
         }
 
-        function showLoginInterface() {
-            loginContainer.style.display = 'block';
-            uploadContainer.classList.remove('active');
-        }
+        // Only setup drop zone events if logged in (dropZone exists)
+        if (dropZone) {
+            // Drop zone events
+            dropZone.addEventListener('click', () => fileInput.click());
 
-        function showUploadInterface(user) {
-            loginContainer.style.display = 'none';
-            uploadContainer.classList.add('active');
-            usernameDisplay.textContent = user;
-        }
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('dragover');
+            });
 
-        // Drop zone events
-        dropZone.addEventListener('click', () => fileInput.click());
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('dragover');
+            });
 
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('dragover');
-        });
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('dragover');
+                
+                const files = e.dataTransfer.files;
+                handleFiles(files);
+            });
 
-        dropZone.addEventListener('dragleave', () => {
-            dropZone.classList.remove('dragover');
-        });
-
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
-            
-            const files = e.dataTransfer.files;
-            handleFiles(files);
-        });
-
-        fileInput.addEventListener('change', (e) => {
-            handleFiles(e.target.files);
-        });
+            fileInput.addEventListener('change', (e) => {
+                handleFiles(e.target.files);
+            });
+        } // end if (dropZone)
 
         function handleFiles(files) {
             Array.from(files).forEach(uploadFile);
@@ -460,7 +445,7 @@
                 const formData = new FormData();
                 formData.append('file', file);
 
-                // Use session-based auth (credentials: include)
+                // Use session-based auth via cookies (credentials: include)
                 const response = await fetch('/upload', {
                     method: 'POST',
                     body: formData,
@@ -482,5 +467,14 @@
                     if (response.status === 401) {
                         showMessage('Session expired. Please sign in again.', 'error');
                         setTimeout(() => { window.location.href = '/login'; }, 2000);
-                    } else if (response.status === 403) {
-                        showMessage('Access denied. You need the videosasghal role.', 'error');
+                    }
+                }
+            } catch (error) {
+                clearInterval(progressInterval);
+                statusDiv.className = 'file-status status-error';
+                statusDiv.textContent = 'Connection error';
+            }
+        }
+    </script>
+</body>
+</html>

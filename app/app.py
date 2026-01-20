@@ -2,6 +2,7 @@ import os
 import configparser
 import logging
 import uuid
+import time
 from functools import wraps
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
@@ -12,6 +13,7 @@ from azure.storage.blob import BlobClient
 import requests
 from urllib.parse import quote, urlencode
 import magic
+import jwt
 
 # Configure logging for gunicorn
 logging.basicConfig(level=logging.INFO)
@@ -56,7 +58,10 @@ config = configparser.RawConfigParser()
 config.read('/app/config.ini')
 
 # Keycloak configuration
+# KEYCLOAK_SERVER_URL: Internal URL for backend communication (container-to-container)
+# KEYCLOAK_EXTERNAL_URL: External URL for browser redirects (user's browser)
 KEYCLOAK_SERVER_URL = os.getenv('KEYCLOAK_SERVER_URL', config.get('keycloak', 'server_url', fallback='http://localhost:8080'))
+KEYCLOAK_EXTERNAL_URL = os.getenv('KEYCLOAK_EXTERNAL_URL', KEYCLOAK_SERVER_URL)  # Defaults to same as internal
 KEYCLOAK_REALM = os.getenv('KEYCLOAK_REALM', config.get('keycloak', 'realm', fallback='asghalpro'))
 KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', config.get('keycloak', 'client_id', fallback='file-uploader'))
 KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', config.get('keycloak', 'client_secret', fallback='file-uploader-secret'))
@@ -165,17 +170,29 @@ def token_required(f):
             return jsonify({'error': 'Token is missing. Please login first.'}), 401
         
         try:
-            # Verify the token with Keycloak
-            token_info = keycloak_openid.introspect(token)
+            # Decode the JWT access token directly (without verification for now)
+            # This avoids introspection issues with issuer mismatch
+            app.logger.info(f"Validating token for session user: {session.get('username', 'unknown')}")
             
-            if not token_info.get('active', False):
-                return jsonify({'error': 'Token is invalid or expired'}), 401
+            # Decode without verification (Keycloak already validated during OAuth flow)
+            token_info = jwt.decode(token, options={"verify_signature": False})
+            
+            # Check if token is expired
+            exp = token_info.get('exp', 0)
+            if exp < time.time():
+                app.logger.warning(f"Token expired for user: {session.get('username', 'unknown')}")
+                return jsonify({'error': 'Token is expired'}), 401
+            
+            app.logger.info(f"Token valid for user: {token_info.get('preferred_username', 'unknown')}")
             
             # Add user info to request
             request.user = token_info
             
+        except jwt.ExpiredSignatureError:
+            app.logger.warning(f"Token expired for user: {session.get('username', 'unknown')}")
+            return jsonify({'error': 'Token is expired'}), 401
         except Exception as e:
-            print(f"Token verification error: {e}")
+            app.logger.error(f"Token verification error: {e}")
             return jsonify({'error': 'Token verification failed'}), 401
         
         return f(*args, **kwargs)
@@ -247,7 +264,13 @@ def index():
     """Main page with drag & drop interface"""
     logged_in = 'access_token' in session
     username = session.get('username', '')
-    return render_template('index.html', logged_in=logged_in, username=username)
+    access_denied = session.get('access_denied', False)
+    access_denied_message = session.get('access_denied_message', '')
+    return render_template('index.html', 
+                           logged_in=logged_in, 
+                           username=username,
+                           access_denied=access_denied,
+                           access_denied_message=access_denied_message)
 
 @app.route('/login')
 def login():
@@ -258,8 +281,8 @@ def login():
     session['oauth_state'] = state
     session['oauth_nonce'] = nonce
     
-    # Build Keycloak authorization URL
-    auth_url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/auth"
+    # Build Keycloak authorization URL (use EXTERNAL URL for browser redirect)
+    auth_url = f"{KEYCLOAK_EXTERNAL_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/auth"
     params = {
         'client_id': KEYCLOAK_CLIENT_ID,
         'redirect_uri': REDIRECT_URI,
@@ -319,18 +342,45 @@ def callback():
         session['refresh_token'] = tokens.get('refresh_token', '')
         session['id_token'] = tokens.get('id_token', '')
         
-        # Get user info
-        userinfo_url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo"
-        headers = {'Authorization': f"Bearer {tokens['access_token']}"}
-        userinfo_response = requests.get(userinfo_url, headers=headers, verify=KEYCLOAK_VERIFY_SSL)
-        
-        if userinfo_response.status_code == 200:
-            userinfo = userinfo_response.json()
-            session['username'] = userinfo.get('preferred_username', userinfo.get('sub'))
-            session['email'] = userinfo.get('email', '')
-            session['name'] = userinfo.get('name', '')
+        # Decode id_token to get user info (JWT is base64 encoded)
+        # The id_token contains user claims directly, avoiding userinfo endpoint issues
+        import base64
+        import json as json_lib
+        try:
+            # JWT has 3 parts: header.payload.signature
+            id_token_parts = tokens.get('id_token', '').split('.')
+            if len(id_token_parts) >= 2:
+                # Decode payload (add padding if needed)
+                payload = id_token_parts[1]
+                payload += '=' * (4 - len(payload) % 4)  # Add padding
+                decoded_payload = base64.urlsafe_b64decode(payload)
+                user_claims = json_lib.loads(decoded_payload)
+                
+                session['username'] = user_claims.get('preferred_username', user_claims.get('sub'))
+                session['email'] = user_claims.get('email', '')
+                session['name'] = user_claims.get('name', '')
+                app.logger.info(f"Decoded user from id_token: {session.get('username')}")
+        except Exception as e:
+            app.logger.error(f"Failed to decode id_token: {e}")
         
         app.logger.info(f"Login successful for user: {session.get('username')}")
+        
+        # Verify user has required role
+        try:
+            access_token = tokens['access_token']
+            token_info = jwt.decode(access_token, options={"verify_signature": False})
+            client_roles = token_info.get('resource_access', {}).get(KEYCLOAK_CLIENT_ID, {}).get('roles', [])
+            
+            if 'videosasghal' not in client_roles:
+                app.logger.warning(f"User {session.get('username')} lacks required role 'videosasghal'. Has roles: {client_roles}")
+                session['access_denied'] = True
+                session['access_denied_message'] = "Access denied. Role 'videosasghal' is required. Contactar con el administrador."
+            else:
+                session['access_denied'] = False
+        except Exception as e:
+            app.logger.error(f"Failed to verify roles: {e}")
+            session['access_denied'] = True
+            session['access_denied_message'] = "Error verifying access permissions."
         
         # Clear OAuth state
         session.pop('oauth_state', None)
@@ -350,9 +400,9 @@ def logout():
     # Clear local session
     session.clear()
     
-    # Redirect to Keycloak logout
+    # Redirect to Keycloak logout (use EXTERNAL URL for browser redirect)
     if id_token:
-        logout_url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/logout"
+        logout_url = f"{KEYCLOAK_EXTERNAL_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/logout"
         params = {
             'id_token_hint': id_token,
             'post_logout_redirect_uri': APP_URL

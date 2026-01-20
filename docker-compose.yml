@@ -14,6 +14,7 @@ services:
     environment:
       # Keycloak - Cambiar estas URLs para producción
       KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://host.docker.internal:8080}
+      KEYCLOAK_EXTERNAL_URL: ${KEYCLOAK_EXTERNAL_URL:-http://localhost:8080}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-asghalpro}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-file-uploader}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-file-uploader-secret}
