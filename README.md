@@ -2,7 +2,18 @@
 
 Secure file upload application with Keycloak authentication and Azure Blob Storage.
 
-## 🛠️ Technology Stack
+## � Security Features
+
+| Feature | Description |
+|---------|-------------|
+| 🛡️ Rate Limiting | 5 attempts/min on login, 30/min on uploads |
+| 📋 Security Headers | X-Frame-Options, CSP, X-XSS-Protection, etc. |
+| 🔍 Magic Bytes Validation | Detects files with spoofed extensions |
+| 🔒 SSL Verification | Configurable for Keycloak connections |
+| 👤 Non-root Container | Runs as unprivileged user |
+| 🔑 Secure Sessions | Flask SECRET_KEY configuration |
+
+## �🛠️ Technology Stack
 
 ### Backend
 | Technology | Version | Description |
@@ -12,7 +23,9 @@ Secure file upload application with Keycloak authentication and Azure Blob Stora
 | Gunicorn | 21.2.0 | WSGI HTTP Server |
 | python-keycloak | 3.7.0 | Keycloak client library |
 | azure-storage-blob | 12.19.0 | Azure Blob Storage SDK |
-| python-jose | 3.3.0 | JWT token handling |
+| flask-limiter | 3.5.0 | Rate limiting |
+| python-magic | 0.4.27 | File type detection |
+| cryptography | ≥42.0.0 | Cryptographic operations |
 
 ### Frontend
 | Technology | Description |
@@ -116,6 +129,10 @@ KEYCLOAK_CLIENT_SECRET=file-uploader-secret
 # Azure Blob Storage (SAS Token)
 AZURE_BLOB_URL=https://your-account.blob.core.windows.net/container
 AZURE_SAS_TOKEN=sv=2025-07-05&spr=https&...
+
+# Security Settings
+KEYCLOAK_VERIFY_SSL=true          # Set to 'false' only for local dev
+SECRET_KEY=your-secret-key-here   # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 ### Configuration Files
@@ -196,22 +213,34 @@ docker ps
 
 ## 🚀 Production Deployment
 
-For production, deploy only `docker-compose.yml` and configure environment variables to point to your production Keycloak:
+For production, deploy only `docker-compose.yml` and configure environment variables:
 
 ```bash
+# Required environment variables for production
 KEYCLOAK_SERVER_URL=https://your-keycloak-production.com
+KEYCLOAK_VERIFY_SSL=true
+SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 ```
+
+### Security Checklist for Production
+
+- [ ] Set `KEYCLOAK_VERIFY_SSL=true` with valid SSL certificates
+- [ ] Generate a strong `SECRET_KEY` and keep it secret
+- [ ] Use HTTPS for the application (reverse proxy recommended)
+- [ ] Configure proper SAS token permissions for Azure Blob
+- [ ] Review rate limiting settings for your use case
+- [ ] Set up log aggregation and monitoring
 
 ## 📋 API Endpoints
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/` | No | Main page (SPA) |
-| POST | `/login` | No | Authenticate user |
-| POST | `/logout` | No | End session |
-| POST | `/upload` | JWT | Upload file |
-| GET | `/check-auth` | Session | Check authentication status |
-| GET | `/health` | No | Health check |
+| Method | Endpoint | Auth | Rate Limit | Description |
+|--------|----------|------|------------|-------------|
+| GET | `/` | No | 50/hour | Main page (SPA) |
+| POST | `/login` | No | **5/min** | Authenticate user |
+| POST | `/logout` | No | 50/hour | End session |
+| POST | `/upload` | JWT | **30/min** | Upload file |
+| GET | `/check-auth` | Session | 50/hour | Check authentication status |
+| GET | `/health` | No | 50/hour | Health check |
 
 ## 📝 License
 
