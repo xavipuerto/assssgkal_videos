@@ -1,8 +1,26 @@
 # AsGhalPro File Uploader
 
-Secure file upload application with Keycloak authentication and Azure Blob Storage.
+Secure file upload application with Keycloak OAuth2 authentication and Azure Blob Storage.
 
-## � Security Features
+## 🔐 Authentication
+
+This application uses **OAuth2 Authorization Code Flow** with Keycloak:
+
+- Users are redirected to Keycloak login page (no password form in the app)
+- After successful authentication, users are redirected back with an authorization code
+- The app exchanges the code for JWT tokens (access_token, id_token, refresh_token)
+- Role-based access control: requires `videosasghal` client role to upload files
+
+### Role-Based Access Control
+
+| Role | Access Level |
+|------|--------------|
+| `videosasghal` | ✅ Can upload files |
+| No role | ❌ Access denied page shown |
+
+Users without the `videosasghal` role will see an access denied message after login.
+
+## 🛡️ Security Features
 
 | Feature | Description |
 |---------|-------------|
@@ -108,20 +126,38 @@ docker-compose up -d --build
 
 ## 👥 Test Users
 
-The `asghalpro` realm comes preconfigured with two users:
+The `asghalpro` realm comes preconfigured with test users:
 
-| Username | Password | Email |
-|----------|----------|-------|
-| carlos.mendez | Carlos123! | carlos.mendez@asghalpro.com |
-| laura.garcia | Laura456! | laura.garcia@asghalpro.com |
+| Username | Password | Email | Role | Access |
+|----------|----------|-------|------|--------|
+| carlos.mendez | Carlos123! | carlos.mendez@asghalpro.com | `videosasghal` | ✅ Full access |
+| laura.garcia | Laura456! | laura.garcia@asghalpro.com | `videosasghal` | ✅ Full access |
+| usuario.sinrol | SinRol123! | sin.rol@asghalpro.com | None | ❌ Denied |
+
+### Managing User Roles
+
+To add/remove the `videosasghal` role from a user:
+
+1. Access Keycloak Admin Console: http://localhost:8080/admin (admin/admin123)
+2. Go to **Users** → Select user → **Role Mapping** tab
+3. Filter by **file-uploader** client
+4. Assign or remove the `videosasghal` role
 
 ## ⚙️ Configuration
 
 ### Environment Variables (.env)
 
 ```bash
-# Keycloak - Change for production
+# Keycloak - Internal URL (container-to-container communication)
 KEYCLOAK_SERVER_URL=http://host.docker.internal:8080
+
+# Keycloak - External URL (browser redirects)
+KEYCLOAK_EXTERNAL_URL=http://localhost:8080
+
+# Application URL (for OAuth2 callback)
+APP_URL=http://localhost:5000
+
+# Keycloak Realm & Client
 KEYCLOAK_REALM=asghalpro
 KEYCLOAK_CLIENT_ID=file-uploader
 KEYCLOAK_CLIENT_SECRET=file-uploader-secret
@@ -134,6 +170,16 @@ AZURE_SAS_TOKEN=sv=2025-07-05&spr=https&...
 KEYCLOAK_VERIFY_SSL=true          # Set to 'false' only for local dev
 SECRET_KEY=your-secret-key-here   # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
 ```
+
+### URL Configuration Explained
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `KEYCLOAK_SERVER_URL` | Backend API calls to Keycloak | `http://host.docker.internal:8080` |
+| `KEYCLOAK_EXTERNAL_URL` | Browser redirects to Keycloak login | `http://localhost:8080` |
+| `APP_URL` | OAuth2 callback URL | `http://localhost:5000` |
+
+> **Note:** In Docker, containers cannot access `localhost` on the host machine. Use `host.docker.internal` for internal communication.
 
 ### Configuration Files
 
@@ -162,35 +208,58 @@ SECRET_KEY=your-secret-key-here   # Generate with: python -c "import secrets; pr
     └── realm-export.json       # Realm + users config
 ```
 
-## 🔒 Authentication Flow
+## 🔒 OAuth2 Authorization Code Flow
 
 ```
 ┌──────────┐     ┌──────────────┐     ┌──────────────┐
 │  Browser │     │  Flask App   │     │   Keycloak   │
 └────┬─────┘     └──────┬───────┘     └──────┬───────┘
      │                  │                    │
-     │ 1. Login Form    │                    │
+     │ 1. Click Login   │                    │
      │─────────────────►│                    │
-     │                  │ 2. Authenticate    │
-     │                  │───────────────────►│
      │                  │                    │
-     │                  │ 3. JWT Token       │
-     │                  │◄───────────────────│
-     │ 4. Store Token   │                    │
+     │ 2. Redirect to Keycloak               │
      │◄─────────────────│                    │
      │                  │                    │
-     │ 5. Upload + JWT  │                    │
+     │ 3. User authenticates                 │
+     │──────────────────────────────────────►│
+     │                  │                    │
+     │ 4. Redirect with auth code            │
+     │◄──────────────────────────────────────│
+     │                  │                    │
+     │ 5. Callback /callback?code=xxx        │
      │─────────────────►│                    │
-     │                  │ 6. Validate JWT    │
+     │                  │ 6. Exchange code   │
      │                  │───────────────────►│
-     │                  │ 7. Token Valid     │
+     │                  │ 7. JWT Tokens      │
      │                  │◄───────────────────│
      │                  │                    │
-     │                  │ 8. Upload to Azure │
+     │                  │ 8. Verify role     │
+     │                  │    (videosasghal)  │
+     │                  │                    │
+     │ 9. Redirect home │                    │
+     │◄─────────────────│                    │
+     │                  │                    │
+     │ 10. Upload + Session Cookie           │
+     │─────────────────►│                    │
+     │                  │ 11. Validate JWT   │
+     │                  │ 12. Check role     │
+     │                  │                    │
+     │                  │ 13. Upload to Azure│
      │                  │──────────────────────────►
-     │ 9. Success       │                    │
+     │ 14. Success      │                    │
      │◄─────────────────│                    │
 ```
+
+### Key Differences from Password Flow
+
+| Aspect | Password Flow | Authorization Code Flow |
+|--------|---------------|------------------------|
+| Login form | In the app | In Keycloak |
+| Credentials | Sent to app | Never seen by app |
+| Security | Lower | Higher (recommended) |
+| SSO | Not possible | ✅ Supported |
+| MFA | App must implement | ✅ Keycloak handles |
 
 ## 🐳 Docker Commands
 
@@ -235,12 +304,36 @@ SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 
 | Method | Endpoint | Auth | Rate Limit | Description |
 |--------|----------|------|------------|-------------|
-| GET | `/` | No | 50/hour | Main page (SPA) |
-| POST | `/login` | No | **5/min** | Authenticate user |
-| POST | `/logout` | No | 50/hour | End session |
-| POST | `/upload` | JWT | **30/min** | Upload file |
-| GET | `/check-auth` | Session | 50/hour | Check authentication status |
+| GET | `/` | No | 50/hour | Main page (Jinja2 rendered) |
+| GET | `/login` | No | **5/min** | Redirect to Keycloak login |
+| GET | `/callback` | No | 50/hour | OAuth2 callback handler |
+| GET | `/logout` | No | 50/hour | End session & redirect to Keycloak logout |
+| POST | `/upload` | JWT+Role | **30/min** | Upload file (requires `videosasghal` role) |
 | GET | `/health` | No | 50/hour | Health check |
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| "Token is invalid or expired" | Session mismatch | Use 1 worker in Gunicorn |
+| Redirect to `host.docker.internal` | Missing external URL | Set `KEYCLOAK_EXTERNAL_URL` |
+| 403 Access Denied | Missing role | Assign `videosasghal` role in Keycloak |
+| Login loop | Multiple workers | Reduce to 1 worker (`--workers 1`) |
+
+### Checking Logs
+
+```bash
+# Application logs
+docker logs file-uploader -f
+
+# Keycloak logs
+docker logs keycloak -f
+
+# Filter for auth events
+docker logs file-uploader 2>&1 | grep -E "Login|Token|role"
+```
 
 ## 📝 License
 
