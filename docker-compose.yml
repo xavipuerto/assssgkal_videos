@@ -23,6 +23,8 @@ services:
       # Security settings
       KEYCLOAK_VERIFY_SSL: ${KEYCLOAK_VERIFY_SSL:-false}
       SECRET_KEY: ${SECRET_KEY:-}
+      # App URL for OAuth2 redirect
+      APP_URL: ${APP_URL:-http://localhost:5000}
     volumes:
       - ./config.ini:/app/config.ini:ro
     ports:

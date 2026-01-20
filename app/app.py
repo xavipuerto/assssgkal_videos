@@ -1,6 +1,7 @@
 import os
 import configparser
 import logging
+import uuid
 from functools import wraps
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
@@ -9,7 +10,7 @@ from flask_limiter.util import get_remote_address
 from keycloak import KeycloakOpenID
 from azure.storage.blob import BlobClient
 import requests
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 import magic
 
 # Configure logging for gunicorn
@@ -59,6 +60,10 @@ KEYCLOAK_SERVER_URL = os.getenv('KEYCLOAK_SERVER_URL', config.get('keycloak', 's
 KEYCLOAK_REALM = os.getenv('KEYCLOAK_REALM', config.get('keycloak', 'realm', fallback='asghalpro'))
 KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', config.get('keycloak', 'client_id', fallback='file-uploader'))
 KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', config.get('keycloak', 'client_secret', fallback='file-uploader-secret'))
+
+# Redirect URI for OAuth2 Authorization Code Flow
+APP_URL = os.getenv('APP_URL', 'http://localhost:5000')
+REDIRECT_URI = f"{APP_URL}/callback"
 
 # Azure Blob configuration (SAS Token)
 AZURE_BLOB_URL = os.getenv('AZURE_BLOB_URL', config.get('azure_blob', 'blob_url', fallback=''))
@@ -176,6 +181,28 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def role_required(role_name):
+    """Decorator to require a specific Keycloak role"""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            # Get user roles from token info
+            user_info = getattr(request, 'user', {})
+            
+            # Roles can be in realm_access.roles or resource_access.{client}.roles
+            realm_roles = user_info.get('realm_access', {}).get('roles', [])
+            client_roles = user_info.get('resource_access', {}).get(KEYCLOAK_CLIENT_ID, {}).get('roles', [])
+            
+            all_roles = realm_roles + client_roles
+            
+            if role_name not in all_roles:
+                app.logger.warning(f"User {user_info.get('username', 'unknown')} lacks role '{role_name}'. Has roles: {all_roles}")
+                return jsonify({'error': f'Access denied. Role \'{role_name}\' is required.'}), 403
+            
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
 def upload_to_blob(file, filename):
     """Upload file to Azure Blob Storage using SAS Token"""
     try:
@@ -222,66 +249,124 @@ def index():
     username = session.get('username', '')
     return render_template('index.html', logged_in=logged_in, username=username)
 
-@app.route('/login', methods=['POST'])
-@limiter.limit("5 per minute")  # Rate limit login attempts
+@app.route('/login')
 def login():
-    """Login endpoint - authenticates with Keycloak and returns JWT"""
-    global keycloak_openid
+    """Redirect to Keycloak login page (Authorization Code Flow)"""
+    # Generate state and nonce for security
+    state = str(uuid.uuid4())
+    nonce = str(uuid.uuid4())
+    session['oauth_state'] = state
+    session['oauth_nonce'] = nonce
     
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
+    # Build Keycloak authorization URL
+    auth_url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/auth"
+    params = {
+        'client_id': KEYCLOAK_CLIENT_ID,
+        'redirect_uri': REDIRECT_URI,
+        'response_type': 'code',
+        'scope': 'openid profile email',
+        'state': state,
+        'nonce': nonce
+    }
     
-    if not username or not password:
-        return jsonify({'error': 'Username and password are required'}), 400
+    authorization_url = f"{auth_url}?{urlencode(params)}"
+    app.logger.info(f"Redirecting to Keycloak: {authorization_url}")
     
-    # Re-initialize Keycloak if needed
-    if keycloak_openid is None:
-        app.logger.warning("Keycloak client not initialized, attempting to initialize...")
-        init_keycloak()
-        
-    if keycloak_openid is None:
-        app.logger.error("Failed to initialize Keycloak client")
-        return jsonify({'error': 'Authentication service unavailable'}), 503
-    
-    try:
-        # Get token from Keycloak
-        app.logger.info(f"Attempting login for user: {username}")
-        token = keycloak_openid.token(username, password)
-        
-        # Store in session
-        session['access_token'] = token['access_token']
-        session['refresh_token'] = token.get('refresh_token', '')
-        session['username'] = username
-        
-        app.logger.info(f"Login successful for user: {username}")
-        return jsonify({
-            'success': True,
-            'message': 'Login successful',
-            'access_token': token['access_token'],
-            'expires_in': token.get('expires_in', 300)
-        })
-    except Exception as e:
-        app.logger.error(f"Login error for user {username}: {str(e)}")
-        return jsonify({'error': 'Invalid credentials'}), 401
+    return redirect(authorization_url)
 
-@app.route('/logout', methods=['POST'])
-def logout():
-    """Logout endpoint - clears session"""
-    try:
-        if 'refresh_token' in session:
-            keycloak_openid.logout(session['refresh_token'])
-    except:
-        pass
+@app.route('/callback')
+def callback():
+    """OAuth2 callback - exchange authorization code for tokens"""
+    # Verify state
+    state = request.args.get('state')
+    if state != session.get('oauth_state'):
+        app.logger.error("Invalid OAuth state")
+        return redirect(url_for('index'))
     
+    # Check for errors
+    error = request.args.get('error')
+    if error:
+        app.logger.error(f"OAuth error: {error} - {request.args.get('error_description')}")
+        return redirect(url_for('index'))
+    
+    # Get authorization code
+    code = request.args.get('code')
+    if not code:
+        app.logger.error("No authorization code received")
+        return redirect(url_for('index'))
+    
+    try:
+        # Exchange code for tokens
+        token_url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+        token_data = {
+            'grant_type': 'authorization_code',
+            'client_id': KEYCLOAK_CLIENT_ID,
+            'client_secret': KEYCLOAK_CLIENT_SECRET,
+            'code': code,
+            'redirect_uri': REDIRECT_URI
+        }
+        
+        response = requests.post(token_url, data=token_data, verify=KEYCLOAK_VERIFY_SSL)
+        
+        if response.status_code != 200:
+            app.logger.error(f"Token exchange failed: {response.text}")
+            return redirect(url_for('index'))
+        
+        tokens = response.json()
+        
+        # Store tokens in session
+        session['access_token'] = tokens['access_token']
+        session['refresh_token'] = tokens.get('refresh_token', '')
+        session['id_token'] = tokens.get('id_token', '')
+        
+        # Get user info
+        userinfo_url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo"
+        headers = {'Authorization': f"Bearer {tokens['access_token']}"}
+        userinfo_response = requests.get(userinfo_url, headers=headers, verify=KEYCLOAK_VERIFY_SSL)
+        
+        if userinfo_response.status_code == 200:
+            userinfo = userinfo_response.json()
+            session['username'] = userinfo.get('preferred_username', userinfo.get('sub'))
+            session['email'] = userinfo.get('email', '')
+            session['name'] = userinfo.get('name', '')
+        
+        app.logger.info(f"Login successful for user: {session.get('username')}")
+        
+        # Clear OAuth state
+        session.pop('oauth_state', None)
+        session.pop('oauth_nonce', None)
+        
+        return redirect(url_for('index'))
+        
+    except Exception as e:
+        app.logger.error(f"Callback error: {str(e)}")
+        return redirect(url_for('index'))
+
+@app.route('/logout')
+def logout():
+    """Logout - clear session and redirect to Keycloak logout"""
+    id_token = session.get('id_token', '')
+    
+    # Clear local session
     session.clear()
-    return jsonify({'success': True, 'message': 'Logged out successfully'})
+    
+    # Redirect to Keycloak logout
+    if id_token:
+        logout_url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/logout"
+        params = {
+            'id_token_hint': id_token,
+            'post_logout_redirect_uri': APP_URL
+        }
+        return redirect(f"{logout_url}?{urlencode(params)}")
+    
+    return redirect(url_for('index'))
 
 @app.route('/upload', methods=['POST'])
 @token_required
+@role_required('videosasghal')
 @limiter.limit("30 per minute")  # Rate limit uploads
 def upload_file():
-    """Upload file endpoint - requires valid JWT"""
+    """Upload file endpoint - requires valid JWT and 'videosasghal' role"""
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
     

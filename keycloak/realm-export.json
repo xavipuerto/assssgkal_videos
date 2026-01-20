@@ -25,13 +25,14 @@
       "secret": "file-uploader-secret",
       "redirectUris": ["http://localhost:5000/*", "http://127.0.0.1:5000/*"],
       "webOrigins": ["http://localhost:5000", "http://127.0.0.1:5000"],
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
       "protocol": "openid-connect",
       "attributes": {
-        "access.token.lifespan": "300"
+        "access.token.lifespan": "300",
+        "post.logout.redirect.uris": "http://localhost:5000/*##http://127.0.0.1:5000/*"
       },
       "defaultClientScopes": [
         "web-origins",
@@ -41,6 +42,27 @@
       ]
     }
   ],
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Regular user role"
+      },
+      {
+        "name": "admin",
+        "description": "Administrator role"
+      }
+    ],
+    "client": {
+      "file-uploader": [
+        {
+          "name": "videosasghal",
+          "description": "Role for video upload access"
+        }
+      ]
+    }
+  },
+  "defaultRoles": ["user"],
   "users": [
     {
       "username": "carlos.mendez",
@@ -74,18 +96,5 @@
       ],
       "realmRoles": ["default-roles-asghalpro"]
     }
-  ],
-  "roles": {
-    "realm": [
-      {
-        "name": "user",
-        "description": "Regular user role"
-      },
-      {
-        "name": "admin",
-        "description": "Administrator role"
-      }
-    ]
-  },
-  "defaultRoles": ["user"]
+  ]
 }
